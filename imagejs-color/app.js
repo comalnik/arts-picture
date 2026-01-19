@@ -7,6 +7,13 @@ const { Image } = require('image-js');
 const app = express();
 const PORT = 3000;
 
+// ==========================================
+// CONFIGURATION
+// ==========================================
+// Change this value to alter the speed (in milliseconds)
+const UPDATE_INTERVAL_MS = 120000; 
+// ==========================================
+
 // Serve static files (e.g., CSS, JS, images)
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -18,13 +25,22 @@ app.get('/', (req, res) => {
 // Load and cache the image in memory to preserve changes between intervals
 let cachedImage = null;
 let cachedReplaceImage = null;
+
 const imagePath = path.join(__dirname, 'public', 'images', 'example.jpg');
 const outputPath = path.join(__dirname, 'public', 'images', 'edited-example.jpg');
 const replacePath = path.join(__dirname, 'public', 'images', 'replace.jpg');
 
 async function loadImage() {
   if (!cachedImage) {
-    cachedImage = await Image.load(imagePath);
+    // FIX: Check if the output file already exists. 
+    // If yes, load it to resume progress. If no, load the original.
+    if (fs.existsSync(outputPath)) {
+      console.log('Found existing progress. Resuming...');
+      cachedImage = await Image.load(outputPath);
+    } else {
+      console.log('No progress found. Starting fresh...');
+      cachedImage = await Image.load(imagePath);
+    }
   }
   return cachedImage;
 }
@@ -36,7 +52,7 @@ async function loadReplaceImage() {
   return cachedReplaceImage;
 }
 
-// Function to turn a random pixel black
+// Function to replace a random pixel
 async function turnRandomPixelBlack() {
   try {
     // Load the image from memory
@@ -46,8 +62,11 @@ async function turnRandomPixelBlack() {
     // Get the image dimensions
     const { width, height } = image;
 
-    let pixelTurnedBlack = false;
-    while (!pixelTurnedBlack) {
+    let pixelChanged = false;
+    let attempts = 0;
+    const maxAttempts = 1000; // Safety break to prevent infinite loops
+
+    while (!pixelChanged && attempts < maxAttempts) {
       // Pick a random pixel
       const x = Math.floor(Math.random() * width);
       const y = Math.floor(Math.random() * height);
@@ -56,35 +75,35 @@ async function turnRandomPixelBlack() {
       const pixel = image.getPixelXY(x, y);
       const replacePixel = replace.getPixelXY(x, y);
 
-      // Check if the pixel is already black (RGB: [0, 0, 0])
+      // Check if the pixel is NOT already the target color
       if (!(pixel[0] === replacePixel[0] && pixel[1] === replacePixel[1] && pixel[2] === replacePixel[2])) {
-        // Turn the pixel black
+        // Change the pixel
         image.setPixelXY(x, y, [replacePixel[0], replacePixel[1], replacePixel[2], pixel[3] || 255]); // Preserve alpha channel
-        pixelTurnedBlack = true;
+        pixelChanged = true;
       }
+      
+      attempts++;
     }
 
-    // Save the modified image
-    await image.save(outputPath);
-    console.log('Random pixel colored.');
+    if (pixelChanged) {
+        // Save the modified image
+        await image.save(outputPath);
+        console.log('Pixel updated.');
+    } else {
+        console.log('Image likely complete (or could not find a pixel to change in 1000 attempts).');
+    }
+
   } catch (error) {
     console.error('Error coloring pixel: ', error);
   }
 }
 
-// Start a 2-second interval to update the image
+// Start the interval using the variable defined at the top
 setInterval(() => {
   turnRandomPixelBlack();
-}, 2000);
+}, UPDATE_INTERVAL_MS);
 
 // Start the server
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
-
-// Public directory structure:
-// - public/
-//   - index.html
-//   - images/
-//     - example.jpg (original image)
-//     - edited-example.jpg (output after effect)
